@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Why Residual Connection Needs Attention</title>
+  <link rel="stylesheet" href="../../style.css">
+
+  <!-- MathJax for LaTeX rendering -->
+  <script>
+    MathJax = {
+      tex: {
+        inlineMath: [['$', '$']],
+        displayMath: [['$$', '$$']],
+      },
+      svg: { fontCache: 'global' }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js" async></script>
+</head>
+
+<body>
+<div class="container">
+
+  <a href="../../" class="back-link">&larr; Back to all posts</a>
+
+  <h1>Why Residual Connection Needs Attention</h1>
+  <p class="post-meta">April 2026</p>
+  <p class="subtitle">Understanding the PreNorm Dilution Problem and how Attention Residuals fix it</p>
+
+  <p>
+    Almost every modern Large Language Model (LLM) uses the exact same foundational architecture: the <strong>PreNorm Residual Connection</strong>. It became the industry standard because it provides more stable training for deep networks compared to the older PostNorm architecture.
+  </p>
+  <p>
+    But there is a hidden catch. As models scale past hundreds of layers, this exact mechanism creates a mathematical bottleneck that essentially dilutes the impact of early signals in deeper layers.
+  </p>
+  <p>
+    Let's break down exactly why this happens and how a new technique called <strong>Attention Residuals</strong> fixes it.
+  </p>
+
+  <h3>The Current Setup: The PreNorm Standard</h3>
+
+  <p>In a standard PreNorm architecture, the equation to move data from one layer to the next looks like this:</p>
+
+  <div class="math-block">$$X_{l+1} = X_l + F_l(\mathrm{Norm}(X_l))$$</div>
+
+  <ul>
+    <li>$X$: The residual stream (the data flowing through the network).</li>
+    <li>$\mathrm{Norm}$: Layer Normalization.</li>
+    <li>$F_l$: The transformation function (e.g., Self-Attention or a Feed-Forward Network).</li>
+  </ul>
+
+  <p>The key idea is simple: each layer adds its output to whatever came before.</p>
+  <p>If every modern LLM uses this, then what exactly is the problem?</p>
+
+  <h3>The Problem: Signal Dilution at Depth</h3>
+
+  <p>Let's unroll the recurrence and trace the data to see what is happening mathematically.</p>
+  <p>Assuming $X_0$ is our initial input:</p>
+
+  <div class="math-block">$$X_{1} = X_0 + F_0(\mathrm{Norm}(X_0))$$</div>
+  <div class="math-block">$$X_{2} = X_1 + F_1(\mathrm{Norm}(X_1))$$</div>
+  <div class="math-block">$$X_{3} = X_2 + F_2(\mathrm{Norm}(X_2))$$</div>
+
+  <p>If we substitute backward and generalize all the way to a deep layer $L$, the residual stream is just a sum of every layer's contribution:</p>
+
+  <div class="math-block">$$X_{l} = X_0 + \sum_{i=0}^{l-1} F_i(\mathrm{Norm}(X_i))$$</div>
+
+  <p>
+    If we look closely at that equation, <strong>we find that every single previous layer contributes to the current state with an exact, fixed weight of</strong> $1$. There is no mechanism for the network to say "Layer 3's output matters more here than Layer 47's." They are all treated equally.
+  </p>
+  <p>
+    We can think of this residual stream as a uniformly distributed, weighted backpack. Every single layer throws its output into the backpack. Because we are endlessly adding these vectors together without scaling them, the mathematical magnitude (variance) of the hidden state grows linearly with the depth of the network. It scales as $\mathcal{O}(L)$.
+  </p>
+
+  <h4>Why This Breaks Things?</h4>
+
+  <p>
+    By the time the data reaches the deeper layers, that backpack is massive. But before those deeper layers can actually access and process this data, it must pass through <strong>Layer Normalization.</strong>
+  </p>
+  <p>
+    The residual stream is a sum of $L$ terms, each of roughly unit variance (due to the Norm before each $F_l$). The total variance is ~ $L$, so the standard deviation is ~ $\sqrt{L}$. After LayerNorm divides by $\sqrt{L}$, the entire normalized vector has unit variance, but each individual layer's 'share' of that unit vector is ~ $\frac{1}{L}$.
+  </p>
+  <p>
+    The deeper the network, the more each early layer's signal is drowned out. By layer 200, the original token embeddings and the features learned in the first few layers are essentially noise &mdash; their relative contribution has been divided by 200.
+  </p>
+  <p>This is the <strong>PreNorm Dilution Problem</strong>.</p>
+  <p>
+    Furthermore, because all weights are fixed to 1, the network has no way to regulate gradient flow across its depth. This leads to <strong>disproportionately massive gradients piling up in the earlier layers</strong>, causing training inefficiencies. Hence deeper layers are essentially forced to output increasingly large numbers just to be "heard" over the noise of the accumulated stream.
+  </p>
+
+  <h3>The Solution: Attention Residuals</h3>
+
+  <p>So, what is the solution?</p>
+  <p>What if, instead of giving every layer a fixed weight of 1, we let the network learn how much each previous layer should contribute?</p>
+  <p>Here is the current "addition" PreNorm formula:</p>
+
+  <div class="math-block">$$X_{l} = X_0 + \sum_{i=0}^{l-1} F_i(\mathrm{Norm}(X_i))$$</div>
+
+  <p>Here is the <strong>Attention Residuals</strong> version:</p>
+
+  <div class="math-block">$$X_{l} = \alpha_{0 \to l} \cdot X_0 + \sum_{i=1}^{l-1} \alpha_{i \to l} \cdot F_i(\mathrm{Norm}(X_i))$$</div>
+
+  <p>
+    Instead of a fixed weight of $1$, we dynamically calculate an attention weight $\alpha_{i \to l}$ for every past layer $i$ contributing to the current layer $l$. Simple, right?
+  </p>
+  <p>But how do we actually calculate these attention scores?</p>
+  <p>The scores are computed using a familiar dot-product attention formula:</p>
+
+  <div class="math-block">$$\alpha_{i \to l} = \mathrm{Softmax}_i\left(\frac{Q_l \cdot \mathrm{RMSNorm}(K_i)}{\sqrt{d_k}}\right)$$</div>
+
+  <p>where the Softmax is taken over all previous layers $i = 0, 1, \ldots, l-1$.</p>
+  <p>Wait a second... what are the queries, keys, and values here? Let's go through this equation piece by piece.</p>
+
+  <h4>1. The Pseudo-Query ($Q_l$)</h4>
+
+  <p>
+    Instead of generating a query dynamically from the current data flowing through the network, the authors assigned a single, permanent, learnable vector to each layer called a <strong>Pseudo-Query</strong> ($W_l$).
+  </p>
+
+  <div class="math-block">$$Q_l = W_l$$</div>
+
+  <p>We use this query to determine the similarity between what the current layer needs and what the previous layers (the keys) have produced.</p>
+  <p>
+    Why does a fixed vector work here instead of a data-dependent query? Because the query isn't asking "what does this specific token need?" &mdash; it's asking a much simpler structural question: <strong>"Given this layer's role in the network, which previous layers' outputs are most useful?"</strong> That question depends on the layer's position and function in the architecture, not on the specific input data flowing through it. A fixed learned vector per layer is sufficient to capture this.
+  </p>
+
+  <h4>2. The RMSNorm on Keys ($K_i$)</h4>
+
+  <p>The keys and values are nothing but the raw outputs of the previous layers.</p>
+  <p>
+    However, if you recall we mentioned earlier that as we go deeper into the network, layers naturally tend to output mathematically larger numbers. If we use the raw outputs exactly as they are, the Softmax function will automatically assign higher weights to the deeper layers simply because their dot products with the query are larger, allowing them to unfairly dominate the attention weights.
+  </p>
+  <p>To fix this, we apply <strong>Root Mean Square Normalization (RMSNorm)</strong> to the keys. This removes the impact of their magnitude and leaves only their feature direction.</p>
+
+  <h4>3. The Softmax Competition</h4>
+
+  <p>Finally, we compute the dot product between the Query and the Keys, and pass it through a Softmax function.</p>
+  <p>
+    Softmax forces all the attention weights to sum up to exactly $1$. This creates a zero-sum competition among the layers. Because the weights must sum to $1$, the new hidden state remains a perfectly balanced weighted average. The magnitude of the residual stream no longer grows with depth &mdash; and that is how we solve the PreNorm Dilution Problem.
+  </p>
+
+  <h3>Problems with Full Attention Residuals</h3>
+
+  <p>While the math is beautiful, it is practically very difficult to compute Full Attention Residuals for complex, deep networks.</p>
+  <p>
+    <strong>Activation Recomputation:</strong> In standard models, once Layer 5 finishes passing its data to Layer 6, you can clear Layer 5's massive activation tensors from the GPU's immediate memory. But in Full Attention Residuals, Layer 100 needs to look directly at Layer 5. This means you must keep the entire history of every single layer's output alive in the GPU memory at all times. For a model with $L$ layers and hidden dimension $d$, this memory cost scales as $\mathcal{O}(Ld)$.
+  </p>
+  <p>
+    <strong>Pipeline Parallelism:</strong> Massive LLMs are too big for one GPU, so they are split across multiple GPUs in a chain. If GPU #2 needs to calculate its attention scores, GPU #1 must transmit the entire history of $L$ individual layer outputs across the network cables. The memory and communication overhead scales drastically as $\mathcal{O}(Ld)$.
+  </p>
+
+  <h3>The Fix: Block Attention Residuals</h3>
+
+  <p>To solve these two problems, the authors introduced <strong>Block Attention Residuals</strong>.</p>
+  <p>
+    Instead of doing attention over every single individual layer, they group the network into manageable chunks, or "blocks" (for example, blocks of $N=8$ layers).
+  </p>
+  <p>
+    <strong>Inside the block</strong>, the network turns off the expensive attention mechanism and reverts to the standard PreNorm addition. The layers compress themselves into a single <strong>"Block Summary."</strong>
+  </p>
+  <p><strong>Between the blocks</strong>, the network calculates the attention scores.</p>
+
+  <div class="math-block">$$B_0 = X_0 \quad \text{(the initial embedding)}$$</div>
+  <div class="math-block">$$B_1 = F_1(\mathrm{Norm}(X_1)) + F_2(\mathrm{Norm}(X_2)) + \cdots + F_8(\mathrm{Norm}(X_8))$$</div>
+  <div class="math-block">$$B_2 = F_9(\mathrm{Norm}(X_9)) + F_{10}(\mathrm{Norm}(X_{10})) + \cdots + F_{16}(\mathrm{Norm}(X_{16}))$$</div>
+
+  <p>Then we compute the attention scores between these block summaries:</p>
+
+  <div class="math-block">$$X_l = \sum_{j=0}^{B-1} \alpha_{j \to l} \cdot B_j$$</div>
+
+  <p>
+    Yes, dilution still exists <em>within</em> each block &mdash; the 8 layers inside still use dumb addition. But the dilution from 8 layers is mild and manageable, a far cry from the catastrophic dilution across 200+ layers. The attention mechanism between blocks is what prevents that dilution from compounding across the full depth of the network.
+  </p>
+  <p>
+    <strong>Why RMSNorm is Crucial Here:</strong> Did you notice something? Because we use the "dumb addition" of previous layer outputs to create the block summary, deeper blocks will mathematically contain much larger numbers than earlier ones. This is exactly why the <strong>RMSNorm Shield</strong> is so vital. By applying RMSNorm to the Block Summaries before computing attention, it removes the magnitude discrepancy and keeps only the feature direction.
+  </p>
+  <p>
+    The memory and communication overhead reduces from $\mathcal{O}(Ld)$ to $\mathcal{O}(Bd)$, where $B$ is the number of blocks. For a 200-layer model with blocks of 8, that's a 25&times; reduction &mdash; the difference between a technique that's theoretically beautiful and one that can actually survive the constraints of real GPU clusters.
+  </p>
+
+  <h3>Closing Thoughts</h3>
+
+  <p>
+    The core insight of Attention Residuals is surprisingly simple: the residual stream's fixed, uniform weighting is a bottleneck, and replacing it with learned, normalized attention over layers fixes the dilution problem without sacrificing training stability. Block Attention Residuals make that insight practical at scale. It gives the model the retrieval capabilities of full attention across its depth, while actually fitting within the memory and communication budgets of real hardware.
+  </p>
+
+  <div class="footer">
+    <p>Written by Nachiket Purohit &middot; <a href="../../">Back to all posts</a></p>
+  </div>
+
+</div>
+</body>
+</html>
