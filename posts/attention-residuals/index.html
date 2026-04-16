@@ -79,10 +79,10 @@
     By the time the data reaches the deeper layers, that backpack is massive. But before those deeper layers can actually access and process this data, it must pass through <strong>Layer Normalization.</strong>
   </p>
   <p>
-    The residual stream is a sum of $L$ terms, each of roughly unit variance (due to the Norm before each $F_l$). The total variance is ~ $L$, so the standard deviation is ~ $\sqrt{L}$. After LayerNorm divides by $\sqrt{L}$, the entire normalized vector has unit variance, but each individual layer's 'share' of that unit vector is ~ $\frac{1}{L}$.
+    The residual stream is a sum of $L$ terms, each of roughly unit variance (due to the Norm before each $F_l$). The total variance is ~ $L$, so the standard deviation is ~ $\sqrt{L}$. When LayerNorm divides the stream by $\sqrt{L}$ to bring the variance back to 1, the magnitude of each individual layer's signal is divided by $\sqrt{L}$, meaning its proportion of the total variance shrinks to $\frac{1}{L}$.
   </p>
   <p>
-    The deeper the network, the more each early layer's signal is drowned out. By layer 200, the original token embeddings and the features learned in the first few layers are essentially noise &mdash; their relative contribution has been divided by 200.
+    The deeper the network, the more each early layer's signal is drowned out. By layer 200, the original token embeddings and the features learned in the first few layers are essentially noise - their signal magnitude has been reduced by a factor of roughly 14 (i.e., $\sqrt{200}$), reducing their variance share to just $\frac{1}{200}$.
   </p>
   <p>This is the <strong>PreNorm Dilution Problem</strong>.</p>
   <p>
@@ -122,7 +122,7 @@
 
   <p>We use this query to determine the similarity between what the current layer needs and what the previous layers (the keys) have produced.</p>
   <p>
-    Why does a fixed vector work here instead of a data-dependent query? Because the query isn't asking "what does this specific token need?" &mdash; it's asking a much simpler structural question: <strong>"Given this layer's role in the network, which previous layers' outputs are most useful?"</strong> That question depends on the layer's position and function in the architecture, not on the specific input data flowing through it. A fixed learned vector per layer is sufficient to capture this.
+    Why does a fixed vector work here instead of a data-dependent query? Because the query isn't asking "what does this specific token need?" - it's asking a much simpler structural question: <strong>"Given this layer's role in the network, which previous layers' outputs are most useful?"</strong> That question depends on the layer's position and function in the architecture, not on the specific input data flowing through it. A fixed learned vector per layer is sufficient to capture this.
   </p>
 
   <h4>2. The RMSNorm on Keys ($K_i$)</h4>
@@ -137,7 +137,7 @@
 
   <p>Finally, we compute the dot product between the Query and the Keys, and pass it through a Softmax function.</p>
   <p>
-    Softmax forces all the attention weights to sum up to exactly $1$. This creates a zero-sum competition among the layers. Because the weights must sum to $1$, the new hidden state remains a perfectly balanced weighted average. The magnitude of the residual stream no longer grows with depth &mdash; and that is how we solve the PreNorm Dilution Problem.
+    Softmax forces all the attention weights to sum up to exactly $1$. This creates a zero-sum competition among the layers. Because the weights must sum to $1$, the new hidden state remains a perfectly balanced weighted average. The magnitude of the residual stream no longer grows with depth - and that is how we solve the PreNorm Dilution Problem.
   </p>
 
   <h3>Problems with Full Attention Residuals</h3>
@@ -170,13 +170,13 @@
   <div class="math-block">$$X_l = \sum_{j=0}^{B-1} \alpha_{j \to l} \cdot B_j$$</div>
 
   <p>
-    Yes, dilution still exists <em>within</em> each block &mdash; the 8 layers inside still use dumb addition. But the dilution from 8 layers is mild and manageable, a far cry from the catastrophic dilution across 200+ layers. The attention mechanism between blocks is what prevents that dilution from compounding across the full depth of the network.
+    Yes, dilution still exists <em>within</em> each block - the 8 layers inside still use dumb addition. But the dilution from 8 layers is mild and manageable, a far cry from the catastrophic dilution across 200+ layers. The attention mechanism between blocks is what prevents that dilution from compounding across the full depth of the network.
   </p>
   <p>
     <strong>Why RMSNorm is Crucial Here:</strong> Did you notice something? Because we use the "dumb addition" of previous layer outputs to create the block summary, deeper blocks will mathematically contain much larger numbers than earlier ones. This is exactly why the <strong>RMSNorm Shield</strong> is so vital. By applying RMSNorm to the Block Summaries before computing attention, it removes the magnitude discrepancy and keeps only the feature direction.
   </p>
   <p>
-    The memory and communication overhead reduces from $\mathcal{O}(Ld)$ to $\mathcal{O}(Bd)$, where $B$ is the number of blocks. For a 200-layer model with blocks of 8, that's a 25&times; reduction &mdash; the difference between a technique that's theoretically beautiful and one that can actually survive the constraints of real GPU clusters.
+    The memory and communication overhead reduces from $\mathcal{O}(Ld)$ to $\mathcal{O}(Bd)$, where $B$ is the number of blocks. For a 200-layer model with blocks of 8, that's a 25&times; reduction - the difference between a technique that's theoretically beautiful and one that can actually survive the constraints of real GPU clusters.
   </p>
 
   <h3>Closing Thoughts</h3>
