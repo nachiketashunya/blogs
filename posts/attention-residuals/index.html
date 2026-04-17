@@ -70,7 +70,7 @@
     If we look closely at that equation, <strong>we find that every single previous layer contributes to the current state with an exact, fixed weight of</strong> $1$. There is no mechanism for the network to say "Layer 3's output matters more here than Layer 47's." They are all treated equally.
   </p>
   <p>
-    We can think of this residual stream as a uniformly distributed, weighted backpack. Every single layer throws its output into the backpack. Because we are endlessly adding these vectors together without scaling them, the mathematical magnitude (variance) of the hidden state grows linearly with the depth of the network. It scales as $\mathcal{O}(L)$.
+    We can think of this residual stream as a uniformly distributed, weighted backpack. Every single layer throws its output into the backpack. Because we are endlessly adding these vectors together without scaling them, the magnitude of the hidden state grows linearly with the depth of the network. It scales as $\mathcal{O}(L)$.
   </p>
 
   <h4>Why This Breaks Things?</h4>
@@ -186,7 +186,7 @@
   </p>
 
   <div class="footer">
-    <p>Written by Nachiket Purohit &middot; <a href="../../">Back to all posts</a></p>
+    <p>Written by Nachiketa Purohit &middot; <a href="../../">Back to all posts</a></p>
   </div>
 
 </div>
