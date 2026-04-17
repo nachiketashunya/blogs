@@ -147,12 +147,12 @@ p {
   margin-bottom: 18px;
 }
 
-ul {
+ul, ol {
   margin-bottom: 18px;
   padding-left: 24px;
 }
 
-ul li {
+ul li, ol li {
   margin-bottom: 10px;
 }
 
